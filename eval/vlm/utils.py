@@ -18,6 +18,7 @@ from data.data_utils import add_special_tokens, pil_img2rgb
 from modeling.bagel import (
     BagelConfig, 
     Bagel, 
+    Bagel_umm, 
     Qwen2Config, 
     Qwen2ForCausalLM, 
     SiglipVisionConfig, 
@@ -49,13 +50,13 @@ def load_model_and_tokenizer(args, safetensor_path):
     )
     language_model = Qwen2ForCausalLM(llm_config)
     vit_model = SiglipVisionModel(vit_config)
-    model = Bagel(language_model, vit_model, config)
+    model = Bagel_umm(language_model, vit_model, config)
     model.vit_model.vision_model.embeddings.convert_conv2d_to_linear(vit_config)
 
     tokenizer = Qwen2Tokenizer.from_pretrained(args.model_path)
     tokenizer, new_token_ids, _ = add_special_tokens(tokenizer)
 
-    model_state_dict_path = os.path.join(safetensor_path)
+    model_state_dict_path = os.path.join(args.model_path, safetensor_path)
     model_state_dict = load_file(model_state_dict_path, device="cpu")
     msg = model.load_state_dict(model_state_dict, strict=False)
     print(msg)
