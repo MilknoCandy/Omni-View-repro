@@ -21,7 +21,7 @@ from typing import Optional
 import numpy as np
 
 import torch
-from eval.vlm.utils import load_model_and_tokenizer, build_transform, process_conversation
+from eval.vlm.utils import load_model_and_tokenizer, load_model_and_tokenizer_acc, build_transform, process_conversation
 from PIL import Image
 from tqdm import tqdm
 from datasets import load_dataset
@@ -365,7 +365,7 @@ if __name__ == '__main__':
     torch.cuda.set_device(int(os.getenv('LOCAL_RANK', 0)))
 
     model, tokenizer, new_token_ids = load_model_and_tokenizer(args, args.safetensor_path)
-    model = model.to(torch.bfloat16)
+    # model, tokenizer, new_token_ids = load_model_and_tokenizer_acc(args, args.safetensor_path)
     image_transform = build_transform()
 
     total_params = sum(p.numel() for p in model.parameters()) / 1e9

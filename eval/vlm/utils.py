@@ -11,8 +11,8 @@
 
 import os
 import yaml
-# import torch
-# from accelerate import infer_auto_device_map, load_checkpoint_and_dispatch, init_empty_weights
+import torch
+from accelerate import infer_auto_device_map, load_checkpoint_and_dispatch, init_empty_weights
 
 from data.data_utils import add_special_tokens, pil_img2rgb
 from modeling.bagel import (
@@ -31,14 +31,17 @@ from data.transforms import ImageTransform
 
 
 def load_model_and_tokenizer(args, safetensor_path):
+    # torch_dtype = torch.bfloat16
     llm_config = Qwen2Config.from_json_file(os.path.join(args.model_path, "llm_config.json"))
     llm_config.qk_norm = True
     llm_config.tie_word_embeddings = False
     llm_config.layer_module ="Qwen2MoTDecoderLayer"
+    # llm_config.torch_dtype = torch_dtype    # for lower GPU memory usage
 
     vit_config = SiglipVisionConfig.from_json_file(os.path.join(args.model_path, "vit_config.json"))
     vit_config.rope = False
     vit_config.num_hidden_layers = vit_config.num_hidden_layers - 1
+    # vit_config.torch_dtype = torch_dtype    # for lower GPU memory usage
 
     config = BagelConfig(
         visual_gen=False,
@@ -56,13 +59,61 @@ def load_model_and_tokenizer(args, safetensor_path):
     tokenizer = Qwen2Tokenizer.from_pretrained(args.model_path)
     tokenizer, new_token_ids, _ = add_special_tokens(tokenizer)
 
-    model_state_dict_path = os.path.join(args.model_path, safetensor_path)
+    model_state_dict_path = os.path.join(safetensor_path)
     model_state_dict = load_file(model_state_dict_path, device="cpu")
     msg = model.load_state_dict(model_state_dict, strict=False)
     print(msg)
     del model_state_dict
 
     model = model.cuda().eval()
+
+    return model, tokenizer, new_token_ids
+
+
+def load_model_and_tokenizer_acc(args, safetensor_path):
+    torch_dtype = torch.bfloat16
+    llm_config = Qwen2Config.from_json_file(os.path.join(args.model_path, "llm_config.json"))
+    llm_config.qk_norm = True
+    llm_config.tie_word_embeddings = False
+    llm_config.layer_module = "Qwen2MoTDecoderLayer"
+    llm_config.torch_dtype = torch_dtype
+
+    vit_config = SiglipVisionConfig.from_json_file(os.path.join(args.model_path, "vit_config.json"))
+    vit_config.rope = False
+    vit_config.num_hidden_layers = vit_config.num_hidden_layers - 1
+    vit_config.torch_dtype = torch_dtype
+
+    config = BagelConfig(
+        visual_gen=False,
+        visual_und=True,
+        llm_config=llm_config,
+        vit_config=vit_config,
+        vit_max_num_patch_per_side=70,
+        connector_act='gelu_pytorch_tanh',
+    )
+
+    with init_empty_weights():
+        language_model = Qwen2ForCausalLM(llm_config)
+        vit_model = SiglipVisionModel(vit_config)
+        model = Bagel_umm(language_model, vit_model, config)
+        model.vit_model.vision_model.embeddings.convert_conv2d_to_linear(vit_config, meta=True)
+
+    tokenizer = Qwen2Tokenizer.from_pretrained(args.model_path)
+    tokenizer, new_token_ids, _ = add_special_tokens(tokenizer)
+
+    local_rank = int(os.getenv("LOCAL_RANK", 0))
+    device_map = infer_auto_device_map(
+        model,
+        max_memory={local_rank: "80GiB"},
+        no_split_module_classes=["Bagel_umm", "Qwen2MoTDecoderLayer"],
+    )
+
+    model = load_checkpoint_and_dispatch(
+        model,
+        checkpoint=os.path.join(args.model_path, safetensor_path),
+        device_map=device_map,
+        dtype=torch_dtype,
+    ).eval()
 
     return model, tokenizer, new_token_ids
 
